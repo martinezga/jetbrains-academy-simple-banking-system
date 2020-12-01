@@ -40,16 +40,36 @@ def main():
 
 def create_account():
     inn = '400000'
-    customer_num = get_random(999999999)
-    checksum = '3'
-    card_num = inn + str(customer_num) + checksum
-    card_pin = str(get_random(9999))
+    customer_num = get_random(900000000, 999999999)
+    checksum = luhn_algorithm(inn + str(customer_num))
+    card_num = inn + str(customer_num) + str(checksum)
+    card_pin = str(get_random(9000, 9999))
     return [card_num, card_pin]
 
 
-def get_random(num):
-    rand_num = random.randrange(0, num)
+def get_random(start, end):
+    rand_num = random.randrange(start, end)
     return rand_num
+
+
+def luhn_algorithm(card_str):
+    card_num = []
+    list_sum = 0
+    checksum = 0
+    for element in card_str:
+        card_num.append(int(element))
+    for i in range(len(card_num)):
+        if i % 2 == 0:
+            card_num[i] *= 2
+    for i in range(len(card_num)):
+        if card_num[i] > 9:
+            card_num[i] -= 9
+    for i in card_num:
+        list_sum += i
+    for i in range(1, 10):
+        if (list_sum + i) % 10 == 0:
+            checksum = i
+    return checksum
 
 
 def check_user(card_num, card_pin):
