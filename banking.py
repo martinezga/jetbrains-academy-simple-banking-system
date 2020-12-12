@@ -8,35 +8,13 @@ menu_options = {
         '0': '0. Exit'
 }
 
-
-def main():
-    user_continue = True
-    while user_continue:
-        for option in menu_options:
-            print(menu_options[option])
-        user_option = input()
-        if user_option == '0':
-            db.close_cursor()
-            user_continue = False
-            print('\nBye!')
-        elif user_option == '1':
-            card = create_account()
-            db.insert_card(card[0], card[1])
-            print('\nYour card has been created')
-            print(f'Your card number:\n{card[0]}')
-            print(f'Your card PIN:\n{card[1]}\n')
-        elif user_option == '2':
-            print('\nEnter your card number:')
-            user_card = input()
-            print('Enter your PIN:')
-            user_pin = input()
-            if db.get_pin_by_number(user_card) != user_pin:
-                print('\nWrong card number or PIN!\n')
-            else:
-                print('\nYou have successfully logged in!\n')
-                user_continue = balance_menu(user_card)
-        else:
-            print('Error')
+BALANCE_PROMPT = """1. Balance
+2. Add income
+3. Do transfer
+4. Close account
+5. Log out
+0. Exit
+"""
 
 
 class DbManager:
@@ -44,24 +22,22 @@ class DbManager:
         self.conn = sqlite3.connect(db_path)
         self.cur = self.conn.cursor()
         self.CREATE_CARD_TABLE = """
-        CREATE TABLE card (
+        CREATE TABLE if not exists card (
             id INTEGER PRIMARY KEY,
             number TEXT UNIQUE,
             pin TEXT,
             balance INTEGER DEFAULT 0);"""
         self.INSERT_CARD = "INSERT INTO card (number, pin) VALUES (?, ?);"
-        self.GET_ALL_CARDS = "SELECT * FROM card;"
         self.GET_PIN_BY_NUMBER = "SELECT pin FROM card WHERE number = ?;"
         self.GET_BALANCE = "SELECT balance FROM card WHERE number = ?;"
+        self.UPDATE_BALANCE = "UPDATE card SET balance = ? WHERE number = ?;"
+        self.DELETE_ACCOUNT = "DELETE FROM card WHERE number = ?;"
 
     def close_cursor(self):
         self.conn.close()
 
     def create_table(self):
-        try:
-            self.cur.execute(self.CREATE_CARD_TABLE)
-        except:
-            pass
+        self.cur.execute(self.CREATE_CARD_TABLE)
 
     def insert_card(self, number, pin):
         self.cur.execute(self.INSERT_CARD, (number, pin))
@@ -70,22 +46,46 @@ class DbManager:
     def get_pin_by_number(self, number):
         pin = self.cur.execute(self.GET_PIN_BY_NUMBER, (number, )).fetchone()
         if pin is None:
-            return 'error'
+            return -1
         else:
             return pin[0]
 
     def get_balance(self, number):
         balance = self.cur.execute(self.GET_BALANCE, (number, )).fetchone()
         if balance is None:
-            return 0
+            return -1
         else:
             return balance[0]
 
-    def get_all_cards(self):
-        return self.cur.execute(self.GET_ALL_CARDS).fetchall()
+    def update_balance(self, card_num, new_balance):
+        self.cur.execute(self.UPDATE_BALANCE, (new_balance, card_num))
+        self.conn.commit()
+
+    def delete_account(self, card_num):
+        self.cur.execute(self.DELETE_ACCOUNT, (card_num, ))
+        self.conn.commit()
 
     # def drop_table(self):
         # self.cur.execute("DROP TABLE card;")
+
+
+class Transactions:
+    def __init__(self, balance):
+        self.balance = balance
+
+    def add_income(self, money):
+        if money > 0:
+            self.balance = self.balance + money
+            return self.balance
+        else:
+            return -1
+
+    def do_transfer(self, money):
+        if money < 0 or money > self.balance:
+            return -1
+        else:
+            self.balance = self.balance - money
+            return self.balance
 
 
 def create_account():
@@ -124,26 +124,100 @@ def luhn_algorithm(card_str):
 
 def balance_menu(card_num):
     continue_balance = True
-    menu = {
-        '1': '1. Balance',
-        '2': '2. Log out',
-        '3': '0. Exit'
-    }
     while continue_balance:
-        for option in menu:
-            print(menu[option])
-        user_option = input()
+        user_option = input(BALANCE_PROMPT)
         if user_option == '0':
             db.close_cursor()
-            continue_balance = False
             return 0
         elif user_option == '1':
             balance = db.get_balance(card_num)
             print(f'\nBalance: {balance}\n')
         elif user_option == '2':
-            print('\nYou have successfully logged out!\n')
-            continue_balance = False
+            do_transaction(card_num, user_option, 0)
+        elif user_option == '3':
+            print('Transfer')
+            card_to_transfer = input('Enter card number:\n')
+            if valid_transfer_card(card_num, card_to_transfer):
+                do_transaction(card_num, user_option, card_to_transfer)
+        elif user_option == '4':
+            db.delete_account(card_num)
+            print('\nThe account has been closed!\n')
             return 1
+        elif user_option == '5':
+            print('\nYou have successfully logged out!\n')
+            return 1
+        else:
+            print('Error')
+
+
+def do_transaction(card_num, user_option, card_to_transfer):
+    user_balance = db.get_balance(card_num)
+    user = Transactions(user_balance)
+    receiver_balance = db.get_balance(card_to_transfer)
+    receiver = Transactions(receiver_balance)
+    if user_option == '2':
+        money = int(input('Enter income:\n'))
+        new_balance = user.add_income(money)
+        if new_balance != -1:
+            db.update_balance(card_num, new_balance)
+            print('Income was added!\n')
+        else:
+            print('Error')
+    elif user_option == '3':
+        money = int(input('Enter how much money you want to transfer:\n'))
+        user_new_balance = user.do_transfer(money)
+        receiver_new_balance = receiver.add_income(money)
+        if user_new_balance != -1:
+            db.update_balance(card_num, user_new_balance)
+            db.update_balance(card_to_transfer, receiver_new_balance)
+            print('\nSuccess!\n')
+        else:
+            print('Not enough money!\n')
+
+
+def valid_transfer_card(user_card, card_to_transfer):
+    flag = 1
+    if user_card == card_to_transfer:
+        print("You can't transfer money to the same account!")
+        flag = flag - 1
+    elif str(luhn_algorithm(card_to_transfer[:15])) != card_to_transfer[15]:
+        print('Probably you made a mistake in the card number. Please try again!\n')
+        flag = flag - 1
+    elif db.get_balance(card_to_transfer) == -1:
+        print('Such a card does not exist.\n')
+        flag = flag - 1
+    if flag == 1:
+        return 1
+    else:
+        return 0
+
+
+def main():
+    user_continue = True
+    while user_continue:
+        for option in menu_options:
+            print(menu_options[option])
+        user_option = input()
+        if user_option == '0':
+            db.close_cursor()
+            user_continue = False
+            print('\nBye!')
+        elif user_option == '1':
+            card = create_account()
+            db.insert_card(card[0], card[1])
+            print('\nYour card has been created')
+            print(f'Your card number:\n{card[0]}')
+            print(f'Your card PIN:\n{card[1]}\n')
+        elif user_option == '2':
+            print('\nEnter your card number:')
+            user_card = input()
+            print('Enter your PIN:')
+            user_pin = input()
+            if db.get_pin_by_number(user_card) != user_pin:
+                print('\nWrong card number or PIN!\n')
+            else:
+                print('\nYou have successfully logged in!\n')
+                user_continue = balance_menu(user_card)
         else:
             print('Error')
 
